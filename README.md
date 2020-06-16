@@ -24,9 +24,10 @@
    I use 'yolov3-416' as example below.
    cd to the project directory and run:
    
-   ./download_yolov3.sh
-   python3 yolov3_to_onnx.py --model yolov3-416
-
+   ```shell
+   $ ./download_yolov3.sh
+   $ python3 yolov3_to_onnx.py --model yolov3-416
+   ```
 
 7- to run the project run: python test_full.py --ip 0.0.0.0 --port xxxxx(>1024) --size xxx (288 or 416 or 608, for yolov3-tiny I only implemented the 416) and then open http://127.0.0.1:xxxxx in your browser
 
