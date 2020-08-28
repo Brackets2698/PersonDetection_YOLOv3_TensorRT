@@ -13,11 +13,64 @@ import tensorrt as trt
 import pycuda.driver as cuda
 from PIL import ImageDraw,Image
 from PIL import ImageFont
+from PIL import Image
 from pycuda.tools import make_default_context
 from data_processing import PreprocessYOLO, PostprocessYOLO, ALL_CATEGORIES
+#from data_processing_tiny import PreprocessYOLO, PostprocessYOLO, ALL_CATEGORIES
 import os
 import common
+import onnxruntime as rt
+import json
+import torch
 
+from torchvision import transforms as T
+from net import *
+
+"""transforms = T.Compose([
+    T.Resize(size=(288, 144)),
+    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])"""
+
+transforms = T.Compose([
+    T.Resize(size=(288, 144)),
+    T.ToTensor(),
+    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+#torch.set_default_dtype(torch.float)
+#torch.set_default_tensor_type(torch.cuda.FloatTensor)
+
+"""def load_network(network):
+    print("Loading network")
+    save_path = "checkpts/market/resnet50/net_last.pth"
+    print("Path set")
+    network.load_state_dict(torch.load(save_path))
+    
+    return network
+"""
+
+class predict_decoder(object):
+
+    def __init__(self, dataset):
+        with open('./doc/label.json', 'r') as f:
+            self.label_list = json.load(f)['market']
+        with open('./doc/attribute.json', 'r') as f:
+            self.attribute_dict = json.load(f)['market']
+        self.dataset = dataset
+        self.num_label = len(self.label_list)
+
+    def decode(self, pred,dictionary):
+        pred = pred.squeeze(dim=0)
+        for idx in range(self.num_label):
+            name, chooce = self.attribute_dict[self.label_list[idx]]
+            if chooce[pred[idx]]:
+             #   print('{}: {}'.format(name, chooce[pred[idx]]))
+                dictionary[name] = chooce[pred[idx]]
+    
+                
+sess = None 
+input_name = None
+label_name = None
 outputFrame = None
 lock = threading.Lock()
 
@@ -42,20 +95,78 @@ def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_
     the category name)
     bbox_color -- an optional string specifying the color of the bounding boxes (default: 'blue')
     """
-    global t0,t1,fps
-    draw = ImageDraw.Draw(image_raw)
+    global t0,t1,fps,sess,inout_name,label_name
+    
+    base = image_raw.convert('RGBA')
+    #draw = ImageDraw.Draw(image_raw)
+    
+    layer = Image.new('RGBA',base.size,(255,255,255,0))
+    draw = ImageDraw.Draw(layer)
+    i = 0
+    
     for box, score, category in zip(bboxes, confidences, categories):
-        x_coord, y_coord, width, height = box
-        left = max(0, np.floor(x_coord + 0.5).astype(int))
-        top = max(0, np.floor(y_coord + 0.5).astype(int))
-        right = min(image_raw.width, np.floor(x_coord + width + 0.5).astype(int))
-        bottom = min(image_raw.height, np.floor(y_coord + height + 0.5).astype(int))
-        draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
-        font = ImageFont.truetype("openSans.ttf", 15)
-        draw.text((left, top - 15), '{0} {1:.2f}'.format(all_categories[category], score), fill=bbox_color, font=font)
+        if(category == 0):
+            
+            out_dict={
+                'gender':None,
+                'hair length':None,
+                'sleeve length':None,
+                'length of lower-body clothing':None,
+                'type of lower-body clothing':None,
+                'wearing hat':None,
+                'carrying backpack':None,
+                'carrying bag':None,
+                'carrying handbag':None,
+                'age':None,
+                'color of upper-body clothing':None,
+                'color of lower-body clothing':None
+            }
+            
+            x_coord, y_coord, width, height = box
+            left = max(0, np.floor(x_coord + 0.5).astype(int))
+            top = max(0, np.floor(y_coord + 0.5).astype(int))
+            right = min(image_raw.width, np.floor(x_coord + width + 0.5).astype(int))
+            bottom = min(image_raw.height, np.floor(y_coord + height + 0.5).astype(int))
+            #Detect Attributes here
+            
+            if(i == i):
+                src = image_raw.crop((left-50,top-20,right+50,bottom+20))
+                src = transforms(src)
+                src = src.unsqueeze(dim=0)
+                src = src.numpy()
+            
+            
+                #out = sess.run([label_name], {input_name: src})[0]
+                out = sess.run([label_name], {input_name: src.astype(np.float32)})[0]
+            
+                #out = model.forward(src)
+                out = torch.from_numpy(out)
+                pred = torch.gt(out, torch.ones_like(out)*0.4)  # threshold=0.5
+
+                Dec = predict_decoder('market')
+                Dec.decode(pred,out_dict)
+                
+                #print(out_dict)
+                
+            i = (i+1)%5
+            if(out_dict['wearing hat']=='yes' or out_dict['carrying bag']=='yes' or out_dict['carrying backpack']=='yes' or out_dict['carrying handbag']=='yes'):
+                bbox_color = 'blue'
+                dangerous = True
+            else:
+                bbox_color = 'red'
+                dangerous = False
+            #Test before drawing
+            if(dangerous):
+                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color,fill=(0,0,255,64))
+            else:
+                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
+            
     font = ImageFont.truetype("openSans.ttf", 28)
     
     draw.text((2, 30), '{:.2f}FPS'.format(fps), fill='white', font=font)
+    
+    image_raw = Image.alpha_composite(base, layer).convert('RGB')
+    
     return image_raw
 
 def get_engine(onnx_file_path, engine_file_path=""):
@@ -92,8 +203,41 @@ def get_engine(onnx_file_path, engine_file_path=""):
         return build_engine()
 
 def main(inputSize):
+    #Load PAR model
+    
+    
+    
     """Create a TensorRT engine for ONNX-based YOLOv3-608 and run inference."""
-    global vs, outputFrame, lock,t0,t1,fps
+    global vs, outputFrame, lock,t0,t1,fps,sess,input_name,label_name
+    
+    #model = ResNet50_nFC(30)
+
+    #model = load_network(model)
+
+    #torch.save(model.state_dict(), "model")
+    #device = torch.device('cuda')
+    #model.to(device)
+    #model.eval()
+    
+    
+    sess_options = rt.SessionOptions()
+
+    # Set graph optimization level
+    #sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+
+    # To enable model serialization after graph optimization set this
+    #sess_options.optimized_model_filepath = "resnet50_nFC.onnx"
+            
+    #sess = rt.InferenceSession("resnet50_nFC.onnx", sess_options)
+    sess = rt.InferenceSession("PAR.onnx")
+    #sess.set_providers(['CUDAExecutionProvider'])
+    #sess.set_providers(['CPUExecutionProvider'])
+
+            
+    input_name = sess.get_inputs()[0].name
+    label_name = sess.get_outputs()[0].name
+    
+    
     cuda.init()
     device = cuda.Device(0)
     onnx_file_path = 'yolov3-{}.onnx'.format(inputSize)
@@ -108,6 +252,9 @@ def main(inputSize):
     output_shapes = [(1, 255, h // 32, w // 32),
                      (1, 255, h // 16, w // 16),
                      (1, 255, h //  8, w //  8)]
+    
+    """output_shapes = [(1, 255, 13, 13), 
+                     (1, 255, 26, 26)]"""
 
     # Do inference with TensorRT
     cuda.init()  # Initialize CUDA
@@ -118,6 +265,12 @@ def main(inputSize):
                           "obj_threshold": 0.5,                                              
                           "nms_threshold": 0.35,                                              
                           "yolo_input_resolution": input_resolution_yolov3_HW}
+    
+    """postprocessor_args = {"yolo_masks": [(3, 4, 5), (0, 1, 2)],
+                          "yolo_anchors": [(10,14),  (23,27),  (37,58),  (81,82),  (135,169),  (344,319)],
+                          "obj_threshold": 0.4, 
+                          "nms_threshold": 0.5,
+                          "yolo_input_resolution": input_resolution_yolov3_HW}"""
 
      
     postprocessor = PostprocessYOLO(**postprocessor_args)
