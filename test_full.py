@@ -72,6 +72,9 @@ sess = None
 input_name = None
 label_name = None
 outputFrame = None
+
+PAR_Model = None
+
 lock = threading.Lock()
 
 app = Flask(__name__)
@@ -79,8 +82,8 @@ app = Flask(__name__)
 cap = cv2.VideoCapture('video1.mp4')
 
 TRT_LOGGER = trt.Logger()
-t0=time.time()
-t1=time.time()
+
+
 def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_color='red'):
     """Draw the bounding boxes on the original input image and return it.
     
@@ -95,7 +98,7 @@ def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_
     the category name)
     bbox_color -- an optional string specifying the color of the bounding boxes (default: 'blue')
     """
-    global t0,t1,fps,sess,inout_name,label_name
+    global t0,t1,fps,sess,inout_name,label_name,PAR_Model
     
     base = image_raw.convert('RGBA')
     #draw = ImageDraw.Draw(image_raw)
@@ -103,9 +106,14 @@ def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_
     layer = Image.new('RGBA',base.size,(255,255,255,0))
     draw = ImageDraw.Draw(layer)
     i = 0
-    with get_engine("", "resnet50_nFC.trt")as engine, engine.create_execution_context() as context:
+    
+    if(PAR_Model is None):
+            PAR_Model = get_engine("","resnet50_nFC.trt")
+    
+    #with PAR_Model as engine, engine.create_execution_context() as context:
+    with PAR_Model.create_execution_context() as context:
                     
-                    inputs, outputs, bindings, stream = common.allocate_buffers(engine)
+                    inputs, outputs, bindings, stream = common.allocate_buffers(PAR_Model)
                                       
                     
                     for box, score, category in zip(bboxes, confidences, categories):
@@ -177,7 +185,7 @@ def get_engine(onnx_file_path, engine_file_path=""):
     def build_engine():
         """Takes an ONNX file and creates a TensorRT engine to run inference with"""
         with trt.Builder(TRT_LOGGER) as builder, builder.create_network() as network, trt.OnnxParser(network, TRT_LOGGER) as parser:
-            builder.max_workspace_size = 1 << 28 # 256MiB
+            builder.max_workspace_size = 1 << 32 # 4 GiB
             builder.max_batch_size = 1
             # Parse model file
             if not os.path.exists(onnx_file_path):
@@ -201,7 +209,9 @@ def get_engine(onnx_file_path, engine_file_path=""):
         # If a serialized engine exists, use it instead of building an engine.
         print("Reading engine from file {}".format(engine_file_path))
         with open(engine_file_path, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
-            return runtime.deserialize_cuda_engine(f.read())
+            
+            engine = runtime.deserialize_cuda_engine(f.read())
+            return engine
     else:
         return build_engine()
 
@@ -211,7 +221,7 @@ def main(inputSize):
     
     
     """Create a TensorRT engine for ONNX-based YOLOv3-608 and run inference."""
-    global vs, outputFrame, lock,t0,t1,fps,sess,input_name,label_name
+    global vs, outputFrame, lock,t0,t1,fps,sess,input_name,label_name,PAR_Model
     
     #model = ResNet50_nFC(30)
 
@@ -259,6 +269,8 @@ def main(inputSize):
     """output_shapes = [(1, 255, 13, 13), 
                      (1, 255, 26, 26)]"""
 
+    
+    
     # Do inference with TensorRT
     cuda.init()  # Initialize CUDA
     ctx = make_default_context()  # Create CUDA context
@@ -278,6 +290,8 @@ def main(inputSize):
      
     postprocessor = PostprocessYOLO(**postprocessor_args)
     with get_engine(onnx_file_path, engine_file_path) as engine, engine.create_execution_context() as context:
+        
+        
         print("performing inference")
         inputs, outputs, bindings, stream = common.allocate_buffers(engine)
         while True:
