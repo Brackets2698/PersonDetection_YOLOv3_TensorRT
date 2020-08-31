@@ -103,63 +103,66 @@ def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_
     layer = Image.new('RGBA',base.size,(255,255,255,0))
     draw = ImageDraw.Draw(layer)
     i = 0
-    
-    for box, score, category in zip(bboxes, confidences, categories):
-        if(category == 0):
+    with get_engine("", "resnet50_nFC.trt")as engine, engine.create_execution_context() as context:
+                    
+                    inputs, outputs, bindings, stream = common.allocate_buffers(engine)
+                                      
+                    
+                    for box, score, category in zip(bboxes, confidences, categories):
+                        if(category == 0):
             
-            out_dict={
-                'gender':None,
-                'hair length':None,
-                'sleeve length':None,
-                'length of lower-body clothing':None,
-                'type of lower-body clothing':None,
-                'wearing hat':None,
-                'carrying backpack':None,
-                'carrying bag':None,
-                'carrying handbag':None,
-                'age':None,
-                'color of upper-body clothing':None,
-                'color of lower-body clothing':None
-            }
-            
-            x_coord, y_coord, width, height = box
-            left = max(0, np.floor(x_coord + 0.5).astype(int))
-            top = max(0, np.floor(y_coord + 0.5).astype(int))
-            right = min(image_raw.width, np.floor(x_coord + width + 0.5).astype(int))
-            bottom = min(image_raw.height, np.floor(y_coord + height + 0.5).astype(int))
-            #Detect Attributes here
-            
-            if(i == i):
-                src = image_raw.crop((left-50,top-20,right+50,bottom+20))
-                src = transforms(src)
-                src = src.unsqueeze(dim=0)
-                src = src.numpy()
-            
-            
-                #out = sess.run([label_name], {input_name: src})[0]
-                out = sess.run([label_name], {input_name: src.astype(np.float32)})[0]
-            
-                #out = model.forward(src)
-                out = torch.from_numpy(out)
-                pred = torch.gt(out, torch.ones_like(out)*0.4)  # threshold=0.5
+                            out_dict={
+                                'gender':None,
+                                'hair length':None,
+                                'sleeve length':None,
+                                'length of lower-body clothing':None,
+                                'type of lower-body clothing':None,
+                                'wearing hat':None,
+                                'carrying backpack':None,
+                                'carrying bag':None,
+                                'carrying handbag':None,
+                                'age':None,
+                                'color of upper-body clothing':None,
+                                'color of lower-body clothing':None
+                            }
 
-                Dec = predict_decoder('market')
-                Dec.decode(pred,out_dict)
-                
-                #print(out_dict)
-                
-            i = (i+1)%5
-            if(out_dict['wearing hat']=='yes' or out_dict['carrying bag']=='yes' or out_dict['carrying backpack']=='yes' or out_dict['carrying handbag']=='yes'):
-                bbox_color = 'blue'
-                dangerous = True
-            else:
-                bbox_color = 'red'
-                dangerous = False
-            #Test before drawing
-            if(dangerous):
-                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color,fill=(0,0,255,64))
-            else:
-                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
+                            x_coord, y_coord, width, height = box
+                            left = max(0, np.floor(x_coord + 0.5).astype(int))
+                            top = max(0, np.floor(y_coord + 0.5).astype(int))
+                            right = min(image_raw.width, np.floor(x_coord + width + 0.5).astype(int))
+                            bottom = min(image_raw.height, np.floor(y_coord + height + 0.5).astype(int))
+                            #Detect Attributes here
+
+                            if(i == i):
+                                src = image_raw.crop((left-50,top-20,right+50,bottom+20))
+                                src = transforms(src)
+                                src = src.unsqueeze(dim=0)
+                                src = src.numpy()
+
+                                inputs[0].host = src
+                                #out = sess.run([label_name], {input_name: src})[0]
+                                trt_outputs = common.do_inference(context, bindings=bindings, inputs=inputs, outputs=outputs, stream=stream)
+                                #out = model.forward(src)
+                                out = torch.tensor(trt_outputs)
+                                pred = torch.gt(out, torch.ones_like(out)*0.3)  # threshold=0.5
+
+                                Dec = predict_decoder('market')
+                                Dec.decode(pred,out_dict)
+
+                                #print(out_dict)
+
+                            i = (i+1)%5
+                            if(out_dict['wearing hat']=='yes' or out_dict['carrying bag']=='yes' or out_dict['carrying backpack']=='yes' or out_dict['carrying handbag']=='yes'):
+                                bbox_color = 'blue'
+                                dangerous = True
+                            else:
+                                bbox_color = 'red'
+                                dangerous = False
+                            #Test before drawing
+                            if(dangerous):
+                                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color,fill=(0,0,255,64))
+                            else:
+                                draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
             
     font = ImageFont.truetype("openSans.ttf", 28)
     
@@ -328,11 +331,6 @@ def main(inputSize):
 
 #-------------------------------------------------------------------------------------------------------#
     
-@app.route("/")
-def index():
-	# return the rendered template
-	return render_template("index.html")
-
 
 @app.route("/video_feed")
 def video_feed():
