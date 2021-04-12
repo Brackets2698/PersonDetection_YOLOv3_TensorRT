@@ -152,7 +152,7 @@ def draw_bboxes(image_raw,bboxes, confidences, categories, all_categories, bbox_
                                 trt_outputs = common.do_inference(context, bindings=bindings, inputs=inputs, outputs=outputs, stream=stream)
                                 #out = model.forward(src)
                                 out = torch.tensor(trt_outputs)
-                                pred = torch.gt(out, torch.ones_like(out)*0.3)  # threshold=0.5
+                                pred = torch.gt(out, torch.ones_like(out)*0.5)  # threshold=0.5
 
                                 Dec = predict_decoder('market')
                                 Dec.decode(pred,out_dict)
