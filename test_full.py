@@ -67,8 +67,7 @@ class predict_decoder(object):
              #   print('{}: {}'.format(name, chooce[pred[idx]]))
                 dictionary[name] = chooce[pred[idx]]
     
-                
-sess = None 
+ 
 input_name = None
 label_name = None
 outputFrame = None
@@ -232,8 +231,6 @@ def main(inputSize):
     #model.to(device)
     #model.eval()
     
-    
-    sess_options = rt.SessionOptions()
 
     # Set graph optimization level
     #sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
@@ -242,13 +239,8 @@ def main(inputSize):
     #sess_options.optimized_model_filepath = "resnet50_nFC.onnx"
             
     #sess = rt.InferenceSession("resnet50_nFC.onnx", sess_options)
-    sess = rt.InferenceSession("PAR.onnx")
     #sess.set_providers(['CUDAExecutionProvider'])
     #sess.set_providers(['CPUExecutionProvider'])
-
-            
-    input_name = sess.get_inputs()[0].name
-    label_name = sess.get_outputs()[0].name
     
     
     cuda.init()
