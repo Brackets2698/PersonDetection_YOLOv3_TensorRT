@@ -3,5 +3,5 @@ opencv_python==4.2.0.32
 imutils==0.5.3
 pycuda==2019.1.2
 tensorrt==6.0.1.5
-numpy==1.17.2
+numpy==1.22.0
 Pillow==8.1.1
